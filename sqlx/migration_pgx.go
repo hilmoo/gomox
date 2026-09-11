@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
-// NewMigrate opens a PostgreSQL-backed *migrate.Migrate instance, connecting via a
+// NewMigratePgx opens a PostgreSQL-backed *migrate.Migrate instance, connecting via a
 // pgxpool.Pool built from databaseURL and reading migration files from the
 // "migrations" directory of migrationsFS.
 //
@@ -22,7 +22,7 @@ import (
 //	//go:embed migrations/*.sql
 //	var migrationsFS embed.FS
 //
-//	m, cleanup, err := sqlx.NewMigrate(ctx, dbURL, migrationsFS, logger)
+//	m, cleanup, err := sqlx.NewMigratePgx(ctx, dbURL, migrationsFS, logger)
 //	if err != nil {
 //		return err
 //	}
@@ -32,7 +32,7 @@ import (
 // underlying connection pool; it must be called exactly once, typically via
 // defer, regardless of whether migrations are actually run. On error, all
 // resources opened so far are closed internally and cleanup is nil.
-func NewMigrate(ctx context.Context, databaseURL string, migrationsFS fs.FS, logger *slog.Logger) (*migrate.Migrate, func(), error) {
+func NewMigratePgx(ctx context.Context, databaseURL string, migrationsFS fs.FS, logger *slog.Logger) (*migrate.Migrate, func(), error) {
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
 		return nil, nil, fmt.Errorf("pgxpool.New: %w", err)
