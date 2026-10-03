@@ -1,0 +1,43 @@
+{{/*
+One small interface per operation instead of a single ServerInterface. A feature's
+HandlerHTTP implements only the operations it owns: <OperationId>(c, ...) returns the
+response value and a *herodot.DefaultError. Operations without a JSON success body
+have the untyped <OperationId>(c, ...) error. RegisterHandlers discovers them.
+*/}}
+{{range .}}{{if not .IsAlias}}{{$opid := .OperationId}}
+{{- $status := ""}}{{$resp := ""}}{{$body := ""}}
+{{- range .Bodies}}{{if .IsJSON}}{{$body = printf "%s%sRequestBody" $opid .NameTag}}{{end}}{{end}}
+{{- range .Responses}}{{if or (eq .StatusCode "200") (eq .StatusCode "201") (eq .StatusCode "204")}}{{$status = .StatusCode}}
+{{- range .Contents}}{{if eq .ContentType "application/json"}}{{$resp = .Schema.TypeDecl}}{{end}}{{end}}{{end}}{{end}}
+{{- if and (ne $status "") (or (eq $status "204") (and (ne $resp "") (ne $resp "interface{}") (ne $resp "any")))}}
+// {{$opid}}Handler handles {{.Method}} {{.Path}}: the body is already validated and the
+// returned value is written as the response.
+type {{$opid}}Handler interface {
+	{{$opid}}(c *echo.Context{{genParamArgs .PathParams}}{{if .RequiresParamObject}}, params {{$opid}}Params{{end}}{{if ne $body ""}}, body *{{$body}}{{end}}) ({{if ne $status "204"}}{{$resp}}, {{end}}*herodot.DefaultError)
+}
+
+{{else}}
+// {{$opid}}Handler handles {{.Method}} {{.Path}}.
+type {{$opid}}Handler interface {
+	{{$opid}}(c *echo.Context{{genParamArgs .PathParams}}{{if .RequiresParamObject}}, params {{$opid}}Params{{end}}) error
+}
+{{end}}
+{{end}}{{end}}
+{{/*
+One interface per tag (first tag of each operation), composed of the per-operation
+handler interfaces above. A feature asserts `var _ httpserver.<Tag>Server = (*HandlerHTTP)(nil)`
+so the compiler lists every operation it does not implement yet. Operations are sorted by
+path, so a tag's operations need not be contiguous: each tag is declared once, at its first
+operation, and collects all of its operations.
+*/}}
+{{- range $i, $op := .}}{{if not $op.IsAlias}}{{$tag := ""}}{{if $op.Spec.Tags}}{{$tag = index $op.Spec.Tags 0}}{{end}}
+{{- $seen := false}}
+{{- range $j, $prev := $}}{{if and (lt $j $i) (not $prev.IsAlias)}}{{$pt := ""}}{{if $prev.Spec.Tags}}{{$pt = index $prev.Spec.Tags 0}}{{end}}{{if eq $pt $tag}}{{$seen = true}}{{end}}{{end}}{{end}}
+{{- if not $seen}}
+// {{$tag}}Server is every operation tagged {{$tag}}.
+type {{$tag}}Server interface {
+{{- range $other := $}}{{if not $other.IsAlias}}{{$ot := ""}}{{if $other.Spec.Tags}}{{$ot = index $other.Spec.Tags 0}}{{end}}{{if eq $ot $tag}}
+	{{$other.OperationId}}Handler
+{{- end}}{{end}}{{end}}
+}
+{{end}}{{end}}{{end}}

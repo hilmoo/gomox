@@ -1,0 +1,69 @@
+// EchoRouter is satisfied by both *echo.Echo and *echo.Group.
+type EchoRouter interface {
+	Add(method, path string, handler echo.HandlerFunc, middleware ...echo.MiddlewareFunc) echo.RouteInfo
+	Any(path string, handler echo.HandlerFunc, middleware ...echo.MiddlewareFunc) echo.RouteInfo
+}
+
+// Operation describes one route of the OpenAPI spec.
+type Operation struct {
+	ID     string // operationId, e.g. AuthLogin
+	Tag    string // first tag, e.g. Auth
+	Method string
+	Path   string // echo path, e.g. /api/auth/me
+}
+
+// RegisterOptions configures RegisterHandlers.
+type RegisterOptions struct {
+	// Validate validates request bodies for typed handlers.
+	Validate *validation.Vld
+	// Middlewares optionally returns per-route middleware (e.g. auth) for an operation.
+	Middlewares func(op Operation) []echo.MiddlewareFunc
+}
+
+// RegisterHandlers registers every spec operation that at least one of handlers
+// implements (as <OperationId>). Routes come from the spec,
+// so features do not register anything by hand. It returns the IDs of the
+// operations that no handler implements and were therefore not registered.
+//
+// Nested []any values are flattened, so a feature constructor may return several
+// handlers. It panics when a handler implements no operation at all (wrong type,
+// value instead of pointer, wrong signature...), since that is a wiring bug that
+// would otherwise only surface as 404s.
+func RegisterHandlers(r EchoRouter, opts RegisterOptions, handlers ...any) (unregistered []string) {
+	w := ServerInterfaceWrapper{Handlers: flattenHandlers(handlers), Validate: opts.Validate}
+
+{{range .}}{{$any := index .Spec.Extensions "x-any-method"}}{{$wild := index .Spec.Extensions "x-wildcard"}}	if h := w.{{.OperationId}}(); h != nil {
+		op := Operation{ID: "{{.OperationId}}", Tag: "{{if .Spec.Tags}}{{index .Spec.Tags 0}}{{end}}", Method: "{{if $any}}ANY{{else}}{{.Method}}{{end}}", Path: {{.Path | swaggerUriToEchoUri | toGoString}}{{if $wild}} + "*"{{end}}}
+
+		var mw []echo.MiddlewareFunc
+		if opts.Middlewares != nil {
+			mw = opts.Middlewares(op)
+		}
+
+{{if $any}}		r.Any(op.Path, h, mw...){{else}}		r.Add(op.Method, op.Path, h, mw...){{end}}
+	} else {
+		unregistered = append(unregistered, "{{.OperationId}}")
+	}
+
+{{end}}	for i, h := range w.Handlers {
+		if _, ok := w.used[i]; !ok {
+			panic(fmt.Sprintf("httpserver: handler %T implements no operation of the spec", h))
+		}
+	}
+
+	return unregistered
+}
+
+func flattenHandlers(handlers []any) []any {
+	var out []any
+	for _, h := range handlers {
+		if nested, ok := h.([]any); ok {
+			out = append(out, flattenHandlers(nested)...)
+
+			continue
+		}
+		out = append(out, h)
+	}
+
+	return out
+}

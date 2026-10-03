@@ -1,0 +1,90 @@
+// ServerInterfaceWrapper binds parameters and dispatches to whichever of the
+// registered handlers implements an operation.
+type ServerInterfaceWrapper struct {
+	Handlers []any
+	Validate *validation.Vld // validates request bodies of typed handlers
+
+	used map[int]struct{} // indexes of Handlers that implement at least one operation
+}
+
+// committed reports whether a typed handler already wrote the response itself
+// (the generic escape hatch: write to c, then return the zero value and no error).
+func committed(c *echo.Context) bool {
+	rw, err := echo.UnwrapResponse(c.Response())
+
+	return err == nil && rw.Committed
+}
+
+func find[T any](w *ServerInterfaceWrapper) (T, bool) {
+	for i, h := range w.Handlers {
+		if t, ok := h.(T); ok {
+			if w.used == nil {
+				w.used = map[int]struct{}{}
+			}
+			w.used[i] = struct{}{}
+
+			return t, true
+		}
+	}
+	var zero T
+	return zero, false
+}
+
+{{range .}}{{$opid := .OperationId}}{{if not .IsAlias}}{{template "wrapperOp" .}}{{end}}{{end}}
+
+{{define "wrapperOp"}}{{$opid := .OperationId}}
+{{- $status := ""}}{{$resp := ""}}{{$body := ""}}
+{{- range .Bodies}}{{if .IsJSON}}{{$body = printf "%s%sRequestBody" $opid .NameTag}}{{end}}{{end}}
+{{- range .Responses}}{{if or (eq .StatusCode "200") (eq .StatusCode "201") (eq .StatusCode "204")}}{{$status = .StatusCode}}
+{{- range .Contents}}{{if eq .ContentType "application/json"}}{{$resp = .Schema.TypeDecl}}{{end}}{{end}}{{end}}{{end}}
+{{- $hasTyped := and (ne $status "") (or (eq $status "204") (and (ne $resp "") (ne $resp "interface{}") (ne $resp "any")))}}
+
+// {{$opid}} returns the echo handler for {{$opid}}, or nil when no registered handler implements it.
+func (w *ServerInterfaceWrapper) {{$opid}}() echo.HandlerFunc {
+	h, ok := find[{{$opid}}Handler](w)
+	if !ok {
+		return nil
+	}
+
+	return func(c *echo.Context) error {
+{{range .PathParams}}{{$varName := .GoVariableName -}}
+{{if eq .TypeDef "string"}}		{{$varName}} := c.Param("{{.ParamName}}")
+{{else}}		var {{$varName}} {{.TypeDef}}
+		if err := runtime.BindStyledParameterWithOptions("{{.Style}}", "{{.ParamName}}", c.Param("{{.ParamName}}"), &{{$varName}}, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: {{.Explode}}, Required: {{.Required}}, Type: "{{.SchemaType}}", Format: "{{.SchemaFormat}}", ValueIsUnescaped: c.Request().URL.RawPath == ""}); err != nil {
+			return errort.HTTPError(c, herodot.ErrBadRequest.WithReasonf("invalid %s: %s", "{{.ParamName}}", c.Param("{{.ParamName}}")).WithDebug(err.Error()))
+		}
+{{end}}
+{{end}}{{if .RequiresParamObject}}		var params {{$opid}}Params
+{{range .QueryParams}}		if err := runtime.BindQueryParameterWithOptions("{{.Style}}", {{.Explode}}, {{.Required}}, "{{.ParamName}}", c.QueryParams(), &params.{{.GoName}}, runtime.BindQueryParameterOptions{Type: "{{.SchemaType}}", Format: "{{.SchemaFormat}}"}); err != nil {
+			return errort.HTTPError(c, herodot.ErrBadRequest.WithReasonf("invalid query parameter %s", "{{.ParamName}}").WithDebug(err.Error()))
+		}
+{{end}}
+{{end}}{{if $hasTyped}}{{if ne $body ""}}			body, errH := w.Validate.BindValidatePayload[{{$body}}](c)
+			if errH != nil {
+				return errort.HTTPError(c, errH)
+			}
+
+{{end}}{{if eq $status "204"}}			if errH := h.{{$opid}}(c{{genParamNames .PathParams}}{{if .RequiresParamObject}}, params{{end}}{{if ne $body ""}}, body{{end}}); errH != nil {
+				return errort.HTTPError(c, errH)
+			}
+
+			if committed(c) {
+				return nil
+			}
+
+			return c.NoContent(http.StatusNoContent)
+{{else}}			resp, errH := h.{{$opid}}(c{{genParamNames .PathParams}}{{if .RequiresParamObject}}, params{{end}}{{if ne $body ""}}, body{{end}})
+			if errH != nil {
+				return errort.HTTPError(c, errH)
+			}
+
+			if committed(c) {
+				return nil
+			}
+
+			return c.JSON(http.StatusOK, resp)
+{{end}}{{else}}		return h.{{$opid}}(c{{genParamNames .PathParams}}{{if .RequiresParamObject}}, params{{end}})
+{{end}}	}
+}
+
+{{end}}
