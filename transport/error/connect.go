@@ -2,7 +2,6 @@ package errort
 
 import (
 	"context"
-	"net/http"
 
 	mlog "github.com/hilmoo/gomox/transport/middleware/log"
 
