@@ -14,7 +14,7 @@ const sessionDuration = 7 * 24 * time.Hour
 // NewSessionParams describes a session row to persist, as built by [CreateSession].
 type NewSessionParams struct {
 	UserID    uuid.UUID
-	Token     string
+	HashToken string
 	ExpiresAt time.Time
 	IPAddress *string
 	UserAgent *string
@@ -49,7 +49,7 @@ func CreateSession(ctx context.Context, args CreateSessionParams) (string, *hero
 
 	if hErr := args.CreateSession(ctx, NewSessionParams{
 		UserID:    args.UserID,
-		Token:     hashToken,
+		HashToken: hashToken,
 		ExpiresAt: time.Now().Add(sessionDuration),
 		IPAddress: args.IPAddress,
 		UserAgent: args.UserAgent,

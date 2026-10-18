@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"errors"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/ory/herodot"
 )
 
@@ -18,19 +17,6 @@ func MapDBErrorHTTP(err error, resourceName string) *herodot.DefaultError {
 		return nil
 	}
 	if errors.Is(err, sql.ErrNoRows) {
-		return herodot.ErrNotFound.WithReason(resourceName + " not found").WithDebug(err.Error())
-	}
-	return herodot.ErrInternalServerError.WithReason("database error for " + resourceName).WithDebug(err.Error())
-}
-
-// MapPgxErrorHTTP maps a pgx error into a herodot error suitable for an HTTP response,
-// translating [pgx.ErrNoRows] into a not-found error and returning nil for a nil err.
-// resourceName is used to build a human-readable reason (e.g. "user not found").
-func MapPgxErrorHTTP(err error, resourceName string) *herodot.DefaultError {
-	if err == nil {
-		return nil
-	}
-	if errors.Is(err, pgx.ErrNoRows) {
 		return herodot.ErrNotFound.WithReason(resourceName + " not found").WithDebug(err.Error())
 	}
 	return herodot.ErrInternalServerError.WithReason("database error for " + resourceName).WithDebug(err.Error())
